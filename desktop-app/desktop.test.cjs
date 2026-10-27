@@ -1,0 +1,116 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const os = require('node:os');
+const { _electron } = require(process.env.BC_PLAYWRIGHT_MODULE || 'playwright');
+(async () => {
+  const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'bc-design-desktop-test-'));
+  const out = path.resolve(__dirname, '../test-results');
+  await fs.mkdir(out, { recursive: true });
+  const executablePath = process.env.BC_DESIGN_TEST_EXE || require('electron');
+  const args = process.env.BC_DESIGN_TEST_EXE ? [] : [__dirname];
+  const env = { ...process.env, BC_DESIGN_TEST_PROFILE: profile }; delete env.ELECTRON_RUN_AS_NODE;
+  let electron;
+  const errors = [];
+  const label=(process.env.BC_DESIGN_TEST_LABEL||'development').replace(/[^a-z0-9-]/gi,'');
+  const expected=JSON.parse(await fs.readFile(path.join(__dirname,'workspace/build-info.json'),'utf8'));
+  const resultPath=path.join(out,'desktop63-'+label+'.json');
+  try {
+    electron = await _electron.launch({ executablePath, args, env });
+    let page = await electron.firstWindow(); page.on('pageerror', e => errors.push(e.message));
+    await page.locator('#designCanvas').waitFor();
+    assert.equal(page.url(), 'bcdesign://app/index.html');
+    assert.equal(await electron.evaluate(({app})=>app.getVersion()),expected.version);
+    assert.deepEqual(await page.evaluate(()=>fetch('bcdesign://app/build-info.json').then(r=>r.json())),expected);
+    const preferences = await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences());
+    assert.equal(preferences.nodeIntegration, false); assert.equal(preferences.contextIsolation, true); assert.equal(preferences.sandbox, true);
+    assert.equal(await page.evaluate(() => typeof require), 'undefined');
+    assert.equal(await page.evaluate(() => fetch('bcdesign://app/package.json').then(r => r.status)), 404);
+    await page.locator('#loadExampleButton').click();
+    assert.ok(await page.evaluate(() => state.model.walls.length > 0));
+    const renderState=await page.evaluate(()=>JSON.stringify({model:state.model,history:state.history,view:state.view,visibility:state.visibility}));
+    await page.locator('#renderedDrawingsButton').click();
+    await page.waitForFunction(()=>document.querySelectorAll('#realisticRenderGallery img').length===3&&[...document.querySelectorAll('#realisticRenderGallery img')].every(image=>image.complete&&image.naturalWidth>0));
+    assert.equal(await page.locator('#renderedDrawingGallery img').count(),5);
+    assert.equal(await page.evaluate(()=>JSON.stringify({model:state.model,history:state.history,view:state.view,visibility:state.visibility})),renderState);
+    const galleryPng=await electron.evaluate(async({BrowserWindow})=>(await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'));
+    await fs.writeFile(path.join(out,'desktop-'+label+'-renders.png'),Buffer.from(galleryPng,'base64'));
+    const popupWait=electron.waitForEvent('window',{timeout:10000});
+    await page.locator('#realisticRenderGallery a').first().click();
+    const imageWindow=await popupWait;await imageWindow.waitForLoadState();
+    assert.ok(await imageWindow.locator('img').evaluate(image=>image.complete&&image.naturalWidth>0));await imageWindow.close();
+    await page.locator('#closeRenderedDrawings').click();
+    await page.locator('[data-mode="quantities"]').click();
+    assert.match(await page.locator('#quantityCards').innerText(),/112\.50 m³/);
+    assert.match(await page.locator('#quantityCards').innerText(),/240\.00 m²/);
+    await page.locator('[data-mode="plan"]').click();
+    await page.evaluate(()=>{
+      const d=state.model.decks[0];
+      d.boards={...makeDeckBoards(),enabled:true,width:90,thickness:19,gap:5,angle:0,firstOffset:0,topOffset:0};
+      const a=d.points[0],b=d.points[1];
+      d.edgeRuns=[{...makeDeckEdge(),id:'desktop-edge',name:'Measured fascia',enabled:true,ax:a.x,ay:a.y,bx:b.x,by:b.y,offset:0,thickness:20,depth:200,top:d.elevation}];
+      d.posts=[{...makeDeckPost(),id:'desktop-post',shape:'rectangle',width:90,depth:90,angle:0,x:a.x,y:a.y,base:d.elevation-1200,top:d.elevation-200}];
+      const f=state.model.floors[0];state.model.floorOpenings=[{...makeFloorOpening(f),width:500,length:500,mode:'cut'}];
+      const stair=state.model.stairs[0]||makeStair({x:0,y:0},{x:2000,y:0},state.model.activeLevelId);if(!state.model.stairs.length)state.model.stairs.push(stair);
+      stair.continuation={...makeStairContinuation(),layout:'landing',landingLength:1200,landingWidth:1200,landingThickness:100};
+      render();
+    });
+    assert.ok(await page.evaluate(()=>deckEdgeResults()[0].body.volume>0));
+    assert.ok(await page.evaluate(()=>deckBoardGeometry(state.model.decks[0]).pieces.length>0));
+    assert.equal(await page.evaluate(()=>deckPostResults()[0].body.length),1000);
+    assert.equal(await page.evaluate(()=>typeof stairHeadroomResults),'function');
+    const fixture = await page.evaluate(() => { const m = normalizeModel(clone(state.model)); m.name = 'Desktop verification'; return m; });
+    await page.locator('#fileInput').setInputFiles({ name: 'desktop-fixture.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(fixture)) });
+    await page.waitForFunction(() => state.model.name === 'Desktop verification');
+    await page.locator('#workspace-tab-layers').click();
+    for (const mode of ['3d', 'plan']) {
+      await page.locator(`[data-mode="${mode}"]`).click(); await page.locator('#fitButton').click();
+      const before = await page.locator('#designCanvas').evaluate(canvas => canvas.toDataURL());
+      await page.locator('[data-layer="walls"]').uncheck();
+      assert.notEqual(before, await page.locator('#designCanvas').evaluate(canvas => canvas.toDataURL()));
+      await page.locator('[data-layer="walls"]').check();
+    }
+    const exportPath = path.join(profile, 'saved-project.json');
+    await electron.evaluate(({ session }, savePath) => {
+      session.defaultSession.once('will-download', (_event, item) => item.setSavePath(savePath));
+    }, exportPath);
+    await page.locator('#saveButton').click();
+    for (let i = 0; i < 60; i++) { try { await fs.access(exportPath); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
+    const saved = JSON.parse(await fs.readFile(exportPath, 'utf8'));
+    assert.equal(saved.schema, expected.schema); assert.equal(saved.name, fixture.name); assert.deepEqual(saved.walls, fixture.walls);
+    assert.deepEqual(saved.decks,fixture.decks);assert.deepEqual(saved.floorOpenings,fixture.floorOpenings);assert.deepEqual(saved.stairs,fixture.stairs);
+    const csvPath = path.join(profile, 'quantities.csv');
+    await electron.evaluate(({ session }, savePath) => session.defaultSession.once('will-download', (_event, item) => item.setSavePath(savePath)), csvPath);
+    await page.evaluate(() => exportCsv());
+    for (let i = 0; i < 60; i++) { try { await fs.access(csvPath); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
+    assert.match(await fs.readFile(csvPath, 'utf8'), /Package.*Net quantity/);
+    const exportFile=async(name,trigger)=>{const dest=path.join(profile,name);await electron.evaluate(({session},savePath)=>session.defaultSession.once('will-download',(_e,item)=>item.setSavePath(savePath)),dest);await trigger();for(let i=0;i<60;i++){try{return await fs.readFile(dest,'utf8');}catch{await new Promise(r=>setTimeout(r,100));}}throw Error('Missing export '+name);};
+    await page.locator('#workspace-tab-schedules').click();
+    const edgesCsv=await exportFile('edges.csv',()=>page.locator('#deckEdgeCsvButton').click());assert.match(edgesCsv,/Measured fascia/);
+    await page.locator('.top-actions .workspace-menu summary').click();
+    await page.locator('#planSheetButton').click();await page.locator('#planSheetScale').fill('200');
+    const svg=await exportFile('scaled-plan.svg',()=>page.locator('#planSheetDownload').click());assert.match(svg,/<svg/);assert.match(svg,/Deck edges \/ fascia/);
+    await page.locator('#workspace-tab-layers').click();
+    await page.locator('#layerSearch').fill('deck edges');
+    await page.locator('[data-layer="deckEdges"]').uncheck();assert.equal(await page.evaluate(()=>state.visibility.deckEdges),false);await page.locator('[data-layer="deckEdges"]').check();
+    const capture = async file => {
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const png = await electron.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'));
+      await fs.writeFile(path.join(out, file), Buffer.from(png, 'base64'));
+    };
+    await capture('desktop63-'+label+'-plan.png');
+    await page.locator('[data-mode="3d"]').click(); await capture('desktop63-'+label+'-3d.png');
+    await page.evaluate(() => persist());
+    await electron.close(); electron = null;
+    electron = await _electron.launch({ executablePath, args, env });
+    page = await electron.firstWindow(); page.on('pageerror', e => errors.push(e.message));
+    await page.locator('#designCanvas').waitFor();
+    assert.equal(await page.locator('#projectName').inputValue(), fixture.name);
+    assert.deepEqual(await page.evaluate(() => state.model.walls), fixture.walls);
+    assert.deepEqual(await page.evaluate(()=>state.model.decks),fixture.decks);
+    assert.deepEqual(await page.evaluate(()=>state.model.floorOpenings),fixture.floorOpenings);
+    assert.deepEqual(errors, []);
+    await fs.writeFile(resultPath,JSON.stringify({checked:new Date().toISOString(),label,version:expected.version,source:expected.source,schema:expected.schema,passed:true,isolatedProfile:true,flows:['renderer/protocol isolation','new geometry and independent layers','JSON','CSV','scaled SVG','autosave/restart']},null,2));
+    console.log('Desktop passed: packaged workspace, renderer isolation, asset boundary, JSON open/save, CSV export, Plan/3D layers, autosave across app restart; no page errors.');
+  } finally { if (electron) await electron.close(); }
+})().catch(error => { console.error(error); process.exitCode = 1; });

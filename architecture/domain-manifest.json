@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "architecture": "modular-monolith",
+  "runtime": "single-browser-workspace",
+  "domains": {
+    "shell": {
+      "purpose": "Owns application state, orchestration, persistence, input handling and rendering coordination.",
+      "files": ["app.js", "domain-registry.js", "workspace-ui.js", "rendered-drawings.js", "pdf-jspdf.js", "pdf-svg2pdf.js", "pdf-fonts.js", "vector-pdf.js"]
+    },
+    "building": {
+      "purpose": "Owns building geometry and building-specific coordination records.",
+      "files": [
+        "foundation-details.js", "foundation-setout.js", "floor-framing.js", "floor-fittings.js",
+        "floor-openings.js", "floor-cuts.js", "roofs.js", "roof-junctions.js", "roof-trimming.js",
+        "roof-framing.js", "rooms.js", "stairs.js", "stair-coordination.js", "stair-rails.js",
+        "stair-headroom.js", "stair-rail-members.js", "stair-rail-ends.js", "plan-sheet.js",
+        "kitchen.js", "elevations.js", "wet-areas.js", "energy-efficiency.js", "site-sheet.js", "stock-planning.js", "connector-details.js", "member-end-cuts.js"
+      ]
+    },
+    "decking": {
+      "purpose": "Owns deck framing, boards, edges, posts, supports and member reviews.",
+      "files": [
+        "deck-framing.js", "deck-boards.js", "deck-supports.js", "deck-posts.js",
+        "deck-post-members.js", "deck-edges.js"
+      ]
+    },
+    "services": {
+      "purpose": "Owns measured routes, fittings, fixtures, connections, envelopes and physical review overlays.",
+      "files": [
+        "services.js", "service-connections.js", "service-envelopes.js", "material-references.js",
+        "service-clearance-checks.js", "service-route-body-checks.js", "service-route-volumes.js"
+      ],
+      "publicApi": [
+        "makeService", "makeServiceItem", "serviceGeometry", "validateService", "normalizeServices",
+        "normalizeServiceConnections", "normalizeServiceEnvelopes", "serviceQuantityRows",
+        "serviceConnectionRows", "serviceClearanceChecks", "serviceRouteBodyChecks",
+        "serviceVolumeGeometry", "serviceRouteVolumeBounds"
+      ]
+    }
+  },
+  "boundaryRules": [
+    "Domains communicate through model records and the registered facade; there are no network calls between domains.",
+    "The shell is the only owner of persistence, history, selection, input routing and cross-domain rendering order.",
+    "A domain may add files without creating a new deployable or a second source of truth.",
+    "Extract a separate service only after independent deployment, scaling, ownership or isolation is demonstrated."
+  ]
+}

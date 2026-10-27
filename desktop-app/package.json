@@ -1,0 +1,50 @@
+{
+  "name": "bc-design-desktop",
+  "productName": "BC Design",
+  "version": "0.6.8",
+  "description": "Measured building design for Bloxham Building & Construction",
+  "author": "Bloxham Building & Construction",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "sync": "node scripts/sync.mjs",
+    "start": "pnpm run sync && electron .",
+    "build:win": "pnpm run sync && electron-builder --win nsis --arm64 --x64 --publish never",
+    "test": "node paths.test.cjs"
+  },
+  "devDependencies": {
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "au.com.bloxham.bcdesign",
+    "asar": true,
+    "directories": {
+      "output": "release/0.6.8",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.cjs",
+      "paths.cjs",
+      "workspace/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png",
+      "artifactName": "BC-Design-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "BC Design",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": false
+    }
+  }
+}

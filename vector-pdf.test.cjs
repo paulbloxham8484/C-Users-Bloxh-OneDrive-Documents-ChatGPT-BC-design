@@ -1,0 +1,20 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+const ts=require('./expo-app/node_modules/typescript');
+const compiled=ts.transpileModule(fs.readFileSync('expo-app/src/export-bytes.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
+const sandbox={exports:{},Uint8Array};vm.runInNewContext(compiled,sandbox);const decode=sandbox.exports.decodeExportContent;
+const message=s=>({content:s,encoding:'base64',mime:'application/pdf'});
+for(const length of [1,2,3,255,256,257,1024*1024]){const bytes=Buffer.concat([Buffer.from('%PDF-1.7\n'),Buffer.from(Array.from({length},(_,i)=>i%256))]);assert.deepEqual(Buffer.from(decode(message(bytes.toString('base64')))),bytes);}
+assert.equal(decode({content:'Δ² project — UTF-8'}),'Δ² project — UTF-8');
+for(const text of ['', 'JVBERi0','JVBERi0=AAAA','JVBERi0$','JVBERi1=','JVBERi0=\n','AAAA','====','JVBE=AAA','JVBERi0=AAAA'])assert.throws(()=>decode(message(text)));
+assert.throws(()=>decode({...message('JVBERi0='),mime:'text/plain'}));assert.throws(()=>decode({...message('JVBERi0='),encoding:'hex'}));
+assert.throws(()=>decode(message('A'.repeat(44739248))),/base64/);
+const raw=fs.readFileSync('vector-pdf.js','utf8');let calls=0;
+const context={document:undefined,window:{},makePlanSheet:s=>({settings:s,vectorCount:2}),makeSitePlanSheet:s=>({settings:s,vectorCount:3}),layoutSheetDescriptors:s=>s.descriptors,makeLayoutPlanSheet:s=>({settings:s,vectorCount:2}),Uint8Array};vm.createContext(context);vm.runInContext(raw,context);
+assert.equal(context.vectorPdfCapture('plan',{scale:100},{}).length,1);
+assert.equal(context.vectorPdfCapture('site',{paper:'A2',orientation:'landscape',scale:750},{}).length,1);
+assert.equal(context.vectorPdfCapture('set',{levelIds:['L1','L2']},{}).length,2);
+for(const ids of [[],['L1','L1'],Array.from({length:65},(_,i)=>String(i))])assert.throws(()=>context.vectorPdfCapture('set',{levelIds:ids},{}));
+assert.throws(()=>context.vectorPdfCapture('layout',{descriptors:Array(65).fill({})},{}));
+context.makePlanSheet=s=>({vectorCount:500001});assert.throws(()=>context.vectorPdfCapture('plan',{},{}),/500,000/);
+assert.throws(()=>context.vectorPdfCapture('bad',{},{}));
+console.log('Vector PDF limits and native binary decoder passed (all byte values, 1 MiB payload, malformed and non-canonical base64, unchanged UTF-8).');

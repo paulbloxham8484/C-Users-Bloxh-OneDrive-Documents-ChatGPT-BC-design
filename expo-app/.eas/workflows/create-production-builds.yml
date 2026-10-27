@@ -1,0 +1,17 @@
+name: Create Production Builds
+
+jobs:
+  build_android:
+    type: build
+    env:
+      EAS_NO_VCS: '1'
+    params:
+      platform: android
+      profile: production
+  build_ios:
+    type: build
+    env:
+      EAS_NO_VCS: '1'
+    params:
+      platform: ios
+      profile: production

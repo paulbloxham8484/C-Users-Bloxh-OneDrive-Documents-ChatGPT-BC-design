@@ -1,0 +1,15 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const elements=new Map();
+const measure={save(){},restore(){},measureText:t=>({width:String(t).length*6,actualBoundingBoxAscent:12,actualBoundingBoxDescent:3})};
+const fallback={value:'',classList:{add(){},remove(){}},getContext:()=>measure,addEventListener(){}};
+const context=vm.createContext({console,Math,Date,URL,Blob,window:{setTimeout,clearTimeout},document:{readyState:'complete',querySelector(selector){return elements.get(selector)||fallback;},querySelectorAll(){return [];},addEventListener(){} }});
+const scripts=require('./node-workspace-scripts.cjs')();
+vm.runInContext(scripts.map(file=>{const source=fs.readFileSync(file,'utf8');return file==='app.js'?source.split('document.querySelectorAll("[data-tool]")')[0]:source;}).join('\n'),context);
+const run=source=>vm.runInContext(source,context);
+run('state.model=createExampleModel()');
+assert.equal(run('wetAreaRooms().length'),2);
+assert.match(run('wetSvg(wetAreaRooms()[0])'),/Waterproofing|nominal fall|PRELIMINARY ONLY/);
+for(const [id,value] of Object.entries({energyClimateZone:'2',energyFloorArea:'205',energyWindowRatio:'15',energyRoofR:'4.1',energyWallR:'2.5',energyFloorR:'2.5'}))elements.set(`#${id}`,{value,checked:false});
+const result=JSON.parse(run('JSON.stringify(calculateEnergyEfficiency())'));
+assert.equal(result.zone,2);assert.equal(result.input.floorArea,205);assert.ok(result.score>=0&&result.score<=100);assert.ok(Array.isArray(result.actions));
+console.log('Wet-area and energy-screening tests passed: two example wet rooms, SVG detail content, climate-zone inputs and bounded preliminary scoring.');

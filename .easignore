@@ -1,0 +1,20 @@
+# The Expo app is the EAS project inside this shared repository.
+# Keep unrelated local website, desktop and release artifacts out of EAS archives.
+desktop-app/
+distribution/
+website-main/
+website-main-publish/
+test-results/
+tmp/
+output/
+
+# Keep generated dependencies and local build products out of the Expo subtree.
+expo-app/node_modules/
+expo-app/.expo/
+expo-app/dist/
+expo-app/native-export/
+expo-app/ios-export/
+expo-app/android/
+expo-app/ios/
+expo-app/*.log
+expo-app/.env*

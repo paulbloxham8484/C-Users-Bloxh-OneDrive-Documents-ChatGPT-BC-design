@@ -1,0 +1,11 @@
+node_modules/
+.expo/
+dist/
+native-export/
+ios-export/
+android/
+ios/
+*.log
+.env*
+# Generated native source and the public brand icon must be included in the upload.
+!src/generated/workspace.ts

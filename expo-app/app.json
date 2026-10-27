@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "BC Design",
+    "slug": "bc-design",
+    "version": "0.2.0",
+    "orientation": "default",
+    "userInterfaceStyle": "light",
+    "platforms": [
+      "web",
+      "android",
+      "ios"
+    ],
+    "scheme": "bcdesign",
+    "icon": "./public/workspace/brand-mark.png",
+    "android": {
+      "package": "com.bloxham.bcdesign",
+      "adaptiveIcon": {
+        "foregroundImage": "./public/workspace/brand-mark.png",
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./public/workspace/brand-mark.png",
+      "name": "BC Design — Bloxham Building & Construction"
+    },
+    "plugins": [
+      "expo-sharing"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "8abfcb70-2f2e-4d6a-af6c-74641459abaa"
+      }
+    },
+    "owner": "bc-design",
+    "updates": {
+      "url": "https://u.expo.dev/8abfcb70-2f2e-4d6a-af6c-74641459abaa"
+    },
+    "ios": {
+      "bundleIdentifier": "com.bloxham.bcdesign"
+    }
+  }
+}

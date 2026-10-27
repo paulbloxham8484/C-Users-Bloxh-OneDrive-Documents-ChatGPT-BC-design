@@ -1,0 +1,33 @@
+# Dependencies and generated build output
+**/node_modules/
+**/dist/
+**/build/
+**/.local-data/
+
+# Desktop installers and generated release bundles
+desktop-app/release/
+distribution/releases/
+website-main-publish/public/bc-design/downloads/
+website-main-publish/.sites-checkout/
+website-main/.sites-checkout/
+website-main-publish/
+website-main/
+
+# Nested repository metadata; source files remain available in the parent repo
+**/.git/
+
+# Local work products
+tmp/
+output/
+test-results/
+audit-*/
+
+# Expo-generated native folders
+expo-app/android/
+expo-app/ios/
+expo-app/.expo/
+
+# Local secrets
+.env
+.env.*
+!.env.example

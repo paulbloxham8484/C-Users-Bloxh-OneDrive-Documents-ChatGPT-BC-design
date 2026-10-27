@@ -1,0 +1,52 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const { chromium } = require(process.env.BC_PLAYWRIGHT_MODULE || 'playwright');
+(async () => {
+  const { previewServer } = await import('./preview.mjs');
+  const server = previewServer(); await new Promise(r => server.listen(0, '127.0.0.1', r));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
+  const page = await context.newPage(), errors = []; page.on('pageerror', e => errors.push(e.message));
+  try {
+    await page.goto(origin + '/bc-design/');
+    const installerHref = await page.locator('[download]').getAttribute('href');
+    const downloadResponse = await context.request.head(origin + '/bc-design/' + installerHref);
+    assert.equal(downloadResponse.status(), 200); assert.ok(Number(downloadResponse.headers()['content-length']) > 10000000);
+    await page.evaluate(async () => {
+      await caches.open('unrelated-website-cache');
+      await caches.open(`bc-design-shell:${location.origin}/bc-design/app/:old`);
+      await caches.open(`bc-design-shell:${location.origin}/other-app/:v1`);
+    });
+    await fs.mkdir(path.resolve(__dirname, '../test-results'), { recursive: true });
+    await page.screenshot({ path: path.resolve(__dirname, '../test-results/website-desktop.png'), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.screenshot({ path: path.resolve(__dirname, '../test-results/website-mobile.png'), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.getByRole('link', { name: 'Open BC Design' }).click();
+    await page.locator('#designCanvas').waitFor();
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller));
+    const keys = await page.evaluate(() => caches.keys());
+    assert.ok(keys.includes('unrelated-website-cache'));
+    assert.ok(keys.includes(`bc-design-shell:${origin}/other-app/:v1`));
+    assert.ok(!keys.includes(`bc-design-shell:${origin}/bc-design/app/:old`));
+    await page.locator('#loadExampleButton').click();
+    const fixture = await page.evaluate(() => { state.model.name = 'Website offline verification'; document.getElementById('projectName').value = state.model.name; persist(); return clone(state.model); });
+    await context.setOffline(true); await page.reload(); await page.locator('#designCanvas').waitFor();
+    assert.equal(await page.locator('#projectName').inputValue(), fixture.name);
+    assert.deepEqual(await page.evaluate(() => state.model.walls), fixture.walls);
+    await page.locator('[data-mode="3d"]').click(); await page.locator('#fitButton').click();
+    await page.locator('[data-layer="service-water"]').uncheck(); await page.locator('[data-layer="service-water"]').check();
+    const downloading = page.waitForEvent('download'); await page.locator('#saveButton').click();
+    const saved = JSON.parse(await fs.readFile(await (await downloading).path(), 'utf8'));
+    assert.deepEqual(saved.walls, fixture.walls); assert.equal(saved.schema, 30);
+    await page.locator('#fileInput').setInputFiles({ name: 'website-roundtrip.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(saved)) });
+    await page.waitForFunction(() => state.statusMessage === 'Project JSON opened');
+    await context.setOffline(false);
+    assert.deepEqual(errors, []);
+    console.log('Website passed: nested-path launch, existing site caches preserved, own stale cache retired, offline restart/autosave, Plan/3D services, JSON download/reopen, installer HTTP response and mobile layout.');
+  } finally { await context.close(); await browser.close(); await new Promise(r => server.close(r)); }
+})().catch(error => { console.error(error); process.exitCode = 1; });

@@ -1,0 +1,50 @@
+const {prepareWorkspace}=require('./browser-workspace-navigation.cjs');
+const assert=require('node:assert/strict'),fs=require('node:fs/promises');
+const {chromium}=require(process.env.BC_PLAYWRIGHT_MODULE||'playwright');
+(async()=>{
+ const browser=await chromium.launch({channel:'msedge',headless:true}),context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true}),page=await context.newPage(),errors=[];
+ page.on('pageerror',e=>errors.push(e.message));let ui=page;
+ const edit=async(index,field,value)=>{const input=ui.locator(`#sr-${index}-${field}`);await input.fill(String(value));await input.press('Tab');};
+ const select=async()=>{await ui.locator('#stairSchedule').evaluate(el=>el.closest('details').open=true);await ui.locator('#stairSchedule [data-stair-id]').first().click();};
+ const open=async(model)=>{await ui.locator('#fileInput').setInputFiles({name:'rails-fixture.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(model))});await ui.waitForFunction(()=>state.statusMessage==='Project JSON opened');};
+ const download=async(id)=>{const waiting=page.waitForEvent('download');await ui.locator(id).click();return fs.readFile(await(await waiting).path(),'utf8');};
+ try{
+  await page.goto(process.env.BC_EXPO_URL||'http://127.0.0.1:4185/');
+  await page.locator('#bc-design-workspace, #designCanvas').waitFor();if(await page.locator('#bc-design-workspace').count())ui=await(await page.locator('#bc-design-workspace').elementHandle()).contentFrame();
+  await ui.locator('#designCanvas').waitFor();await prepareWorkspace(ui);
+  const fixture=await ui.evaluate(()=>{const m=createEmptyModel();m.name='Measured stair rail review';const s=makeStair({x:0,y:1400},{x:0,y:0},m.activeLevelId);s.name='Entry stair';s.continuation={...makeStairContinuation(),layout:'return-left',landingLength:1200,landingWidth:2000,landingThickness:150,flightWidth:900,flightRun:1200,flightRise:900,flightRisers:5,flightGap:100};m.stairs=[s];m.levels.push({id:'upper-test',name:'Upper test',elevation:3000});return m;});
+  await open(fixture);await select();
+  await ui.locator('[data-action="add-stair-handrail"]').click();assert.equal(await ui.locator('#sr-0-height').inputValue(),'');
+  assert.match(await ui.locator('#selectionDetails').innerText(),/Rail dimensions pending/);
+  await edit(0,'height',1000);await edit(0,'dimensionSource','Project drawing SR-01');await edit(0,'sectionReference','Selected section pending');
+  assert.equal(await ui.evaluate(()=>stairRailResults()[0].geometry.top[0].z),1180);
+  await edit(0,'height',-1);assert.equal(await ui.locator('#sr-0-height').inputValue(),'1000');
+  await edit(0,'offset',120);await ui.locator('#undoButton').click();assert.equal(await ui.evaluate(()=>state.model.stairs[0].railRuns[0].offset),0);
+  await ui.locator('#redoButton').click();assert.equal(await ui.evaluate(()=>state.model.stairs[0].railRuns[0].offset),120);await select();
+  await ui.locator('[data-action="add-stair-barrier"]').click();await edit(1,'height',1100);
+  assert.match(await ui.locator('#selectionDetails').innerText(),/bottom gap pending/);await edit(1,'bottomGap',100);
+  assert.equal(await ui.evaluate(()=>stairRailResults()[1].geometry.area),1400000);
+  await ui.locator('#sr-1-side').selectOption('right');
+  await ui.locator('[data-action="add-stair-barrier"]').click();await ui.locator('#sr-2-target').selectOption('landing-3');await edit(2,'height',1100);await edit(2,'bottomGap',100);await edit(2,'startInset',200);await edit(2,'endInset',200);
+  await ui.locator('[data-action="add-stair-handrail"]').click();await ui.locator('#sr-3-target').selectOption('flight-2');await edit(3,'height',1000);
+  const initial=await ui.evaluate(()=>stairRailResults().map(r=>r.geometry.length));
+  await ui.locator('[data-mode="plan"]').click();await ui.locator('#fitButton').click();
+  const withRails=await ui.locator('#designCanvas').screenshot();await ui.locator('[data-layer="stairHandrails"]').uncheck();assert.notDeepEqual(await ui.locator('#designCanvas').screenshot(),withRails);await ui.locator('[data-layer="stairHandrails"]').check();
+  await ui.locator('[data-layer="stairs"]').uncheck();await ui.locator('[data-layer="stairLandings"]').uncheck();
+  assert.deepEqual(await ui.evaluate(()=>stairRailResults().map(r=>r.geometry.length)),initial);
+  await ui.locator('[data-layer="stairs"]').check();await ui.locator('[data-layer="stairLandings"]').check();
+  await fs.mkdir('test-results',{recursive:true});await page.screenshot({path:'test-results/stair-rails-plan.png'});
+  await ui.locator('[data-mode="3d"]').click();await ui.locator('#fitButton').click();const withBarriers=await ui.locator('#designCanvas').screenshot();await ui.locator('[data-layer="stairBarriers"]').uncheck();assert.notDeepEqual(await ui.locator('#designCanvas').screenshot(),withBarriers);await ui.locator('[data-layer="stairBarriers"]').check();await page.screenshot({path:'test-results/stair-rails-3d.png'});
+  const csv=await download('#stairRailCsvButton');assert.match(csv,/Top reference length m/);assert.match(csv,/"landing-3"/);assert.match(csv,/Project drawing SR-01/);assert.match(csv,/"1.4"/);
+  const saved=JSON.parse(await download('#saveButton'));assert.equal(saved.schema,30);assert.equal(saved.stairs[0].railRuns.length,4);
+  const bad=structuredClone(saved);bad.stairs[0].railRuns[0].height='bad';await ui.locator('#fileInput').setInputFiles({name:'bad-rails.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(bad))});await ui.waitForFunction(()=>state.statusMessage.includes('valid project dimension'));assert.equal(await ui.evaluate(()=>state.model.stairs[0].railRuns[0].height),1000);
+  saved.stairs[0].levelId='upper-test';await open(saved);await ui.locator('#stairRailSchedule').evaluate(el=>el.closest('details').open=true);await ui.locator('#stairRailSchedule [data-stair-rail-owner]').last().click();assert.equal(await ui.evaluate(()=>state.model.activeLevelId),'upper-test');
+  await ui.locator('#stairLayout').selectOption('none');assert.match(await ui.locator('#stairRailSchedule').innerText(),/Target flight unassessed or absent/);assert.equal(await ui.evaluate(()=>state.model.stairs[0].railRuns.length),4);
+  await ui.locator('#undoButton').click();await select();assert.equal(await ui.evaluate(()=>stairRailResults().filter(r=>r.geometry.assessed).length),4);
+  await ui.locator('[data-action="remove-stair-rail"][data-index="0"]').click();assert.equal(await ui.evaluate(()=>state.model.stairs[0].railRuns.length),3);await ui.locator('#undoButton').click();
+  await ui.waitForFunction(()=>document.querySelector('#saveStatus').textContent==='Saved locally');await page.reload();
+  if(ui!==page){await page.locator('#bc-design-workspace').waitFor();ui=await(await page.locator('#bc-design-workspace').elementHandle()).contentFrame();}
+  await ui.locator('#designCanvas').waitFor();await prepareWorkspace(ui);assert.equal(await ui.evaluate(()=>state.model.stairs[0].railRuns.length),4);assert.equal(await ui.evaluate(()=>stairRailResults()[0].geometry.top[0].z),1180);assert.deepEqual(errors,[]);
+  console.log('Stair rails browser workflow passed: blank/project inputs, live attachments, independent Plan/3D layers, all-level schedule, quantities/CSV, JSON rejection, autosave reload and history; no page errors.');
+ }finally{await context.close();await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1});
