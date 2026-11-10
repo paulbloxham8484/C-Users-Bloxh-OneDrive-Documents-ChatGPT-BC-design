@@ -64,13 +64,20 @@ const state = {
   floorFitSelectedId: null,
   floorAccessSelectedId: null,
   pointerAction: null,
+  activePointerId: null,
   touchPointers: new Map(),
   touchGesture: null,
+  touchNavigationOnly: false,
+  inputSettings: { touchMode: 'navigate', grid: 100, angle: 0 },
   view: { scale: 0.1, offsetX: 50, offsetY: 50, isoScale: 0.08, orbitX: 0, orbitY: 0, orbitYaw: -Math.PI / 4, orbitPitch: 0.53, walkthroughScope: 'site', initialized: false },
   width: 1,
   height: 1,
   dpr: 1,
   saveTimer: null,
+  projectReady: false,
+  lastCheckpointAt: 0,
+  recoveryWarning: '',
+  unreadableAutosave: '',
   showExamplePrompt: true,
   statusMessage: "Ready",
   hidden3dLevels: new Set(),
@@ -654,9 +661,21 @@ function scheduleSave() {
 
 function persist() {
   try {
+    let checkpointWarning = '';
     state.model.name = els.projectName.value.trim() || "Untitled building";
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.model));
-    els.saveStatus.textContent = "Saved locally";
+    const next = JSON.stringify(state.model), previous = localStorage.getItem(STORAGE_KEY);
+    // Keep original bytes before replacing an older autosave, including an unreadable one.
+    if (previous && previous !== next && (!state.lastCheckpointAt || Date.now() - state.lastCheckpointAt > 300000)) {
+      try { BCProjectRecovery.save(localStorage, previous, 'Previous autosave'); }
+      catch (error) {
+        // Optional history must not prevent saving a valid project. Never replace corrupt original data without preserving it.
+        normalizeModel(JSON.parse(previous));
+        checkpointWarning = ' · checkpoint unavailable; Save JSON for backup';
+      }
+      state.lastCheckpointAt = Date.now();
+    }
+    localStorage.setItem(STORAGE_KEY, next);
+    els.saveStatus.textContent = "Saved locally" + checkpointWarning;
     els.saveDot.classList.remove("is-saving");
   } catch (error) {
     els.saveStatus.textContent = "Local save unavailable";
@@ -675,8 +694,9 @@ function isExampleSiteModel(model) {
 }
 
 function restoreSaved() {
+  let saved = '';
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) return false;
     const restored = normalizeModel(JSON.parse(saved));
     // A valid saved project, including a deliberately empty or renamed example,
@@ -686,7 +706,32 @@ function restoreSaved() {
     if (isExampleSiteModel(restored)) { state.mode = "site"; state.tool = "select"; state.visibility.siteConcepts = true; state.view.initialized = false; }
     els.projectName.value = state.model.name;
     return true;
-  } catch (error) { console.warn("BC Design could not restore the local model.", error); return false; }
+  } catch (error) { state.unreadableAutosave = saved || ''; state.recoveryWarning = 'The previous autosave could not be opened. Its original data is retained; open Project recovery to export it.'; console.warn("BC Design could not restore the local model.", error); return false; }
+}
+
+function saveProjectCheckpoint(reason = 'Manual checkpoint') {
+  const model = snapshot(); model.name = els.projectName.value.trim() || model.name;
+  return BCProjectRecovery.save(localStorage, JSON.stringify(model), reason);
+}
+function preserveProjectBeforeReplace(reason) {
+  if (!state.projectReady) return true;
+  try { saveProjectCheckpoint(reason); return true; }
+  catch (error) { state.statusMessage = `Project unchanged: ${error.message}`; render(); return false; }
+}
+function projectRecoveryEntries() {
+  const entries = BCProjectRecovery.list(localStorage);
+  const raw = state.unreadableAutosave;
+  if (state.recoveryWarning && raw && !entries.some(e => e.raw === raw)) entries.unshift({ id: 'unreadable-autosave', name: 'Original unreadable autosave', savedAt: '', reason: 'Export original data', raw });
+  return entries;
+}
+function restoreProjectCheckpoint(id) {
+  const entry = projectRecoveryEntries().find(e => e.id === id);
+  if (!entry) throw new Error('Checkpoint not found.');
+  const model = normalizeModel(JSON.parse(entry.raw)); // Validate before modifying the current drawing.
+  if (!preserveProjectBeforeReplace('Before restoring checkpoint')) return false;
+  resetPointerInteraction();
+  withHistory(() => { state.model = model; els.projectName.value = model.name; state.selected = null; state.deckDraft = []; state.floorDraft = []; state.roomDraft = []; state.serviceDraft = []; });
+  state.view.initialized = false; fitView(); state.statusMessage = 'Checkpoint restored. Undo returns to the previous drawing.'; render(); return true;
 }
 
 function resizeCanvas() {
@@ -767,7 +812,13 @@ function screenToWorld(x, y) { return { x: (x - state.view.offsetX) / state.view
 function eventPoint(event) { const bounds = canvas.getBoundingClientRect(); return { x: event.clientX - bounds.left, y: event.clientY - bounds.top }; }
 
 function snapPoint(value, origin) {
-  let result = { x: Math.round(value.x / 100) * 100, y: Math.round(value.y / 100) * 100 };
+  const grid = state.inputSettings.grid;
+  let result = grid > 0 ? { x: Math.round(value.x / grid) * grid, y: Math.round(value.y / grid) * grid } : { ...value };
+  if (origin && state.inputSettings.angle) {
+    const step = state.inputSettings.angle * Math.PI / 180, angle = Math.round(Math.atan2(result.y - origin.y, result.x - origin.x) / step) * step;
+    const distance = lengthBetween(origin, result);
+    return { x: origin.x + Math.cos(angle) * distance, y: origin.y + Math.sin(angle) * distance };
+  }
   const candidates = state.model.walls.flatMap((wall) => [wall.a, wall.b]).concat(state.model.foundations.flatMap((foundation) => [foundation.a, foundation.b]));
   candidates.push(...[...state.model.pads, ...state.model.piers].filter((item) => item.levelId === state.model.activeLevelId).map((item) => item.center));
   candidates.push(...state.model.rooms.filter((room) => room.levelId === state.model.activeLevelId).flatMap((room) => room.points));
@@ -1603,9 +1654,9 @@ function hitTest(worldPoint) {
 function pointInPolygon(pointValue, polygonPoints) { let inside = false; for (let i = 0, j = polygonPoints.length - 1; i < polygonPoints.length; j = i++) { const xi = polygonPoints[i].x; const yi = polygonPoints[i].y; const xj = polygonPoints[j].x; const yj = polygonPoints[j].y; const intersect = yi > pointValue.y !== yj > pointValue.y && pointValue.x < ((xj - xi) * (pointValue.y - yi)) / (yj - yi) + xi; if (intersect) inside = !inside; } return inside; }
 
 function commitWall() {
-  if (!state.drawing) return; const start = state.drawing.start; let end = state.drawing.current; const exactLength = Number(els.exactLength.value); if (exactLength > 0) { const rawDirection = sub(end, start); const direction = lengthBetween(start, end) >= 1 ? unit(rawDirection) : { x: 1, y: 0 }; end = add(start, scale(direction, exactLength)); } end = snapPoint(end, start); const length = lengthBetween(start, end); if (length < MIN_WALL_LENGTH) { state.statusMessage = "Wall is too short"; state.drawing = null; render(); return; } withHistory(() => { state.model.walls.push({ id: uid("wall"), levelId: state.model.activeLevelId, a: start, b: end, thickness: 140, height: 2700, status: "new", specification: "Unspecified wall assembly" }); }); state.drawing = null; state.statusMessage = `Wall added at ${formatLength(length)}`; }
+  if (!state.drawing) return; const start = state.drawing.start; let end = state.drawing.current; const exactLength = Number(els.exactLength.value); if (exactLength > 0) { const rawDirection = sub(end, start); const direction = lengthBetween(start, end) >= 1 ? unit(rawDirection) : { x: 1, y: 0 }; end = add(start, scale(direction, exactLength)); } if (!(exactLength > 0)) end = snapPoint(end, start); const length = lengthBetween(start, end); if (length < MIN_WALL_LENGTH) { state.statusMessage = "Wall is too short"; state.drawing = null; render(); return; } withHistory(() => { state.model.walls.push({ id: uid("wall"), levelId: state.model.activeLevelId, a: start, b: end, thickness: 140, height: 2700, status: "new", specification: "Unspecified wall assembly" }); }); state.drawing = null; state.statusMessage = `Wall added at ${formatLength(length)}`; }
 
-function commitFoundation() { if (!state.drawing) return; const start = state.drawing.start; let end = state.drawing.current; const exactLength = Number(els.exactLength.value); if (exactLength > 0) { const rawDirection = sub(end, start); const direction = lengthBetween(start, end) >= 1 ? unit(rawDirection) : { x: 1, y: 0 }; end = add(start, scale(direction, exactLength)); } end = snapPoint(end, start); const length = lengthBetween(start, end); if (length < MIN_WALL_LENGTH) { state.statusMessage = "Foundation is too short"; state.drawing = null; render(); return; } withHistory(() => { state.model.foundations.push({ id: uid("foundation"), levelId: state.model.activeLevelId, a: start, b: end, width: 450, depth: 300, elevation: (activeLevel()?.elevation || 0) - 600, status: "preliminary", specification: "Foundation sizing and reinforcement require engineering" }); }); state.drawing = null; state.statusMessage = `Foundation added at ${formatLength(length)}`; render(); }
+function commitFoundation() { if (!state.drawing) return; const start = state.drawing.start; let end = state.drawing.current; const exactLength = Number(els.exactLength.value); if (exactLength > 0) { const rawDirection = sub(end, start); const direction = lengthBetween(start, end) >= 1 ? unit(rawDirection) : { x: 1, y: 0 }; end = add(start, scale(direction, exactLength)); } if (!(exactLength > 0)) end = snapPoint(end, start); const length = lengthBetween(start, end); if (length < MIN_WALL_LENGTH) { state.statusMessage = "Foundation is too short"; state.drawing = null; render(); return; } withHistory(() => { state.model.foundations.push({ id: uid("foundation"), levelId: state.model.activeLevelId, a: start, b: end, width: 450, depth: 300, elevation: (activeLevel()?.elevation || 0) - 600, status: "preliminary", specification: "Foundation sizing and reinforcement require engineering" }); }); state.drawing = null; state.statusMessage = `Foundation added at ${formatLength(length)}`; render(); }
 
 function openingFits(wall, offset, width) { return offset >= 0 && offset + width <= lengthBetween(wall.a, wall.b) && !activeOpenings().some((opening) => opening.wallId === wall.id && offset < opening.offset + opening.width && offset + width > opening.offset); }
 function placeOpening(type, worldPoint) { let nearest = null; for (const wall of activeWalls()) { const hit = distanceToSegment(worldPoint, wall.a, wall.b); if (hit.distance < Math.max(260, wall.thickness / 2 + 120) && (!nearest || hit.distance < nearest.hit.distance)) nearest = { wall, hit }; } if (!nearest) { state.statusMessage = "Tap near a wall to place an opening"; render(); return; } const width = type === "window" ? 1200 : 900; const offset = Math.round((nearest.hit.t * lengthBetween(nearest.wall.a, nearest.wall.b) - width / 2) / 100) * 100; if (!openingFits(nearest.wall, offset, width)) { state.statusMessage = "That opening overlaps another opening"; render(); return; } withHistory(() => { state.model.openings.push({ id: uid("opening"), levelId: nearest.wall.levelId, wallId: nearest.wall.id, type, offset: Math.max(0, offset), width, height: type === "window" ? 1200 : 2100, sill: type === "window" ? 900 : 0, status: "new" }); }); state.statusMessage = `${type === "window" ? "Window" : "Door"} opening added`; }
@@ -1615,20 +1666,46 @@ function finishDeck() { if (state.deckDraft.length < 3) { state.statusMessage = 
 function addFloorPoint(worldPoint) { const snapped = snapPoint(worldPoint); if (state.floorDraft.length >= 3 && lengthBetween(snapped, state.floorDraft[0]) < 180) { finishFloor(); return; } state.floorDraft.push(snapped); state.statusMessage = `${state.floorDraft.length} floor points`; render(); }
 function finishFloor() { if (state.floorDraft.length < 3) { state.statusMessage = "A floor needs at least three points"; render(); return; } const points = state.floorDraft.slice(); state.floorDraft = []; withHistory(() => { state.model.floors.push({ id: uid("floor"), levelId: state.model.activeLevelId, points, elevation: activeLevel().elevation, thickness: 100, status: "new", specification: "Floor build-up specification required" }); }); state.statusMessage = `Floor added at ${formatArea(polygonArea(points))}`; render(); }
 function finishOutline() { if (state.serviceDraft.length) finishServiceRoute(); else if (state.roomDraft.length) finishRoom(); else if (state.floorDraft.length) finishFloor(); else finishDeck(); }
-function cancelDrawing() { state.drawing = null; state.deckDraft = []; state.floorDraft = []; state.roomDraft = []; state.serviceDraft = []; state.serviceError = ""; state.pointerAction = null; render(); }
+function cancelDrawing() { resetPointerInteraction(); state.deckDraft = []; state.floorDraft = []; state.roomDraft = []; state.serviceDraft = []; state.serviceError = ""; render(); }
 
 function panBy(dx, dy) { state.view.offsetX += dx; state.view.offsetY += dy; render(); }
 function zoomAt(factor, x, y) { if (state.mode === "3d") { state.view.isoScale = clamp(state.view.isoScale * factor, .02, .5); render(); return; } const world = screenToWorld(x, y); state.view.scale = clamp(state.view.scale * factor, .025, 1.2); state.view.offsetX = x - world.x * state.view.scale; state.view.offsetY = y - world.y * state.view.scale; render(); }
 function touchCenter() { const points = [...state.touchPointers.values()]; return { x: points.reduce((sum, pointValue) => sum + pointValue.x, 0) / points.length, y: points.reduce((sum, pointValue) => sum + pointValue.y, 0) / points.length }; }
 function touchDistance() { const points = [...state.touchPointers.values()]; return points.length < 2 ? 0 : Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y); }
-
-function onPointerDown(event) {
-  const screen = eventPoint(event);
-  if (event.pointerType === "touch") { canvas.setPointerCapture(event.pointerId); state.touchPointers.set(event.pointerId, screen); state.touchGesture = { center: touchCenter(), distance: touchDistance() }; return; }
-  canvas.setPointerCapture(event.pointerId);
+function releaseCanvasPointer(id) { if (id !== null && canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id); }
+function rebaseTouchGesture() { state.touchGesture = state.touchPointers.size ? { center: touchCenter(), distance: touchDistance() } : null; }
+function clearTouchPointers() {
+  const ids = [...state.touchPointers.keys()]; state.touchPointers.clear(); state.touchGesture = null; state.touchNavigationOnly = false;
+  for (const id of ids) releaseCanvasPointer(id);
+}
+function resetPointerInteraction() {
+  const id = state.activePointerId; state.activePointerId = null; state.drawing = null; state.pointerAction = null;
+  clearTouchPointers(); releaseCanvasPointer(id); if (state.mode === '3d') canvas.style.cursor = 'grab';
+}
+function orbitBy(dx, dy) { state.view.orbitYaw += dx * .012; state.view.orbitPitch = clamp(state.view.orbitPitch - dy * .009, .18, 1.3); }
+function setInputSetting(key, value) {
+  const options = { touchMode: ['navigate', 'draw', 'disabled'], grid: [0, 10, 25, 50, 100, 250, 500, 1000], angle: [0, 45, 90] };
+  if (!options[key]?.includes(value)) return;
+  resetPointerInteraction(); state.inputSettings[key] = value; render();
+}
+function touchDraws() { return state.inputSettings.touchMode === 'draw' && state.mode === 'plan' && state.tool !== 'pan' && !state.touchNavigationOnly; }
+function updatePointerDrawing(event) {
+  if (state.drawing?.pointerId !== event.pointerId) return;
+  const screen = eventPoint(event), origin = ['wall', 'foundation'].includes(state.drawing.kind) ? state.drawing.start : undefined;
+  state.drawing.current = snapPoint(screenToWorld(screen.x, screen.y), origin);
+}
+function finishPointerDrawing(event) {
+  if (state.drawing?.pointerId !== event.pointerId) return;
+  updatePointerDrawing(event);
+  const commit = { wall: commitWall, foundation: commitFoundation, roof: commitRoof, stair: commitStair, dimension: commitDimension, note: commitNote, service: commitService }[state.drawing.kind];
+  if (commit) commit();
+}
+function beginPointerAction(event, screen) {
   const world = screenToWorld(screen.x, screen.y);
-  if (state.mode === "3d" || state.tool === "pan") { state.pointerAction = { kind: state.mode === "3d" ? ((event.shiftKey || event.button === 1 || event.button === 2) ? "pan3d" : "orbit") : "pan", pointerId: event.pointerId, last: screen }; if(state.mode==='3d')canvas.style.cursor='grabbing'; return; }
+  if (state.mode === "3d" || state.tool === "pan" || event.button === 1) { state.pointerAction = { kind: state.mode === "3d" ? ((event.shiftKey || event.button === 1 || event.button === 2) ? "pan3d" : "orbit") : "pan", pointerId: event.pointerId, last: screen }; if(state.mode==='3d')canvas.style.cursor='grabbing'; return; }
   if (["wall", "foundation", "roof", "stair", "dimension", "note", "service"].includes(state.tool)) { const start = snapPoint(world); state.drawing = { kind: state.tool, start, current: start, pointerId: event.pointerId }; render(); return; }
+  // Finger taps are committed on release, so adding a second finger cannot place an accidental object.
+  if (event.pointerType === 'touch' && event.type === 'pointerdown') { state.pointerAction = { kind: 'touchTap', pointerId: event.pointerId, start: screen }; return; }
   if(state.tool==='kitchen'){placeKitchen(world);return;}
   if(state.tool==='kitchenMove'){moveKitchen(world);return;}
   if (state.tool === "service-route") { addServicePoint(world); return; }
@@ -1641,35 +1718,81 @@ function onPointerDown(event) {
   state.selected = state.tool === "select" ? hitTest(world) : null; state.statusMessage = state.selected ? "Object selected" : "Ready"; render();
 }
 
+function onPointerDown(event) {
+  const screen = eventPoint(event);
+  if (event.pointerType === "touch") {
+    // Non-touch input owns its gesture. A palm cannot move the view underneath a pen stroke.
+    if (state.inputSettings.touchMode === 'disabled' || state.activePointerId !== null || state.touchPointers.size >= 2) return;
+    canvas.setPointerCapture(event.pointerId); state.touchPointers.set(event.pointerId, screen);
+    if (state.touchPointers.size === 2) { state.drawing = null; state.pointerAction = null; state.touchNavigationOnly = true; render(); }
+    else if (touchDraws()) beginPointerAction(event, screen);
+    rebaseTouchGesture(); return;
+  }
+  if (state.activePointerId !== null) return;
+  // Eraser/barrel buttons never draw. Mouse middle-drag pans; right-drag only pans in 3D.
+  if (event.button !== 0 && !(event.pointerType === 'mouse' && (event.button === 1 || (event.button === 2 && state.mode === '3d')))) return;
+  state.activePointerId = event.pointerId; state.drawing = null; state.pointerAction = null; clearTouchPointers();
+  canvas.setPointerCapture(event.pointerId);
+  beginPointerAction(event, screen);
+}
+
 function onPointerMove(event) {
   const screen = eventPoint(event);
+  if (event.pointerType === "touch") {
+    if (state.activePointerId !== null || !state.touchPointers.has(event.pointerId) || !state.touchGesture) return;
+    const previous = state.touchGesture; state.touchPointers.set(event.pointerId, screen);
+    if (touchDraws() && state.touchPointers.size === 1) {
+      updatePointerDrawing(event);
+      if (state.pointerAction?.kind === 'touchTap' && lengthBetween(state.pointerAction.start, screen) > 12) state.pointerAction = null;
+      rebaseTouchGesture(); render(); return;
+    }
+    const center = touchCenter(), distance = touchDistance(), dx = center.x - previous.center.x, dy = center.y - previous.center.y;
+    if (state.touchPointers.size === 1 && state.mode === '3d') orbitBy(dx, dy);
+    else {
+      if (state.touchPointers.size >= 2 && previous.distance > 0) zoomAt(distance / previous.distance, previous.center.x, previous.center.y);
+      if (state.mode === '3d') { state.view.orbitX += dx; state.view.orbitY += dy; }
+      else { state.view.offsetX += dx; state.view.offsetY += dy; }
+    }
+    rebaseTouchGesture(); render(); return;
+  }
+  if (state.activePointerId !== event.pointerId) return;
   if (["roof", "stair", "dimension", "note", "service"].includes(state.drawing?.kind) && state.drawing.pointerId === event.pointerId) { state.drawing.current = snapPoint(screenToWorld(screen.x, screen.y)); render(); return; }
-  if (event.pointerType === "touch") { state.touchPointers.set(event.pointerId, screen); if (state.touchPointers.size === 1 && state.touchGesture) { const center = touchCenter(); panBy(center.x - state.touchGesture.center.x, center.y - state.touchGesture.center.y); state.touchGesture.center = center; } else if (state.touchPointers.size >= 2 && state.touchGesture) { const distance = touchDistance(); if (state.touchGesture.distance > 0) zoomAt(distance / state.touchGesture.distance, screen.x, screen.y); state.touchGesture.distance = distance; state.touchGesture.center = touchCenter(); } return; }
   if (state.drawing?.kind === "wall" || state.drawing?.kind === "foundation") { state.drawing.current = snapPoint(screenToWorld(screen.x, screen.y), state.drawing.start); render(); return; }
   if (!state.pointerAction) return;
   const dx = screen.x - state.pointerAction.last.x; const dy = screen.y - state.pointerAction.last.y;
   if (state.pointerAction.kind === "pan") panBy(dx, dy);
   else if (state.pointerAction.kind === "pan3d") { state.view.orbitX += dx; state.view.orbitY += dy; render(); }
-  else { state.view.orbitYaw += dx * .012; state.view.orbitPitch = clamp(state.view.orbitPitch - dy * .009, .18, 1.3); render(); }
+  else { orbitBy(dx, dy); render(); }
   state.pointerAction.last = screen;
 }
 
 function onPointerUp(event) {
-  if (event.type === "pointercancel") { state.drawing = null; state.pointerAction = null; state.touchPointers.delete(event.pointerId); state.touchGesture = null; if (state.mode==='3d')canvas.style.cursor='grab'; if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId); render(); return; }
-  if (["roof", "stair", "dimension", "note", "service"].includes(state.drawing?.kind) && state.drawing.pointerId === event.pointerId) { const screen = eventPoint(event); state.drawing.current = snapPoint(screenToWorld(screen.x, screen.y)); if(state.drawing.kind==="service")commitService();else if(state.drawing.kind==="note")commitNote();else if(state.drawing.kind==="dimension") commitDimension(); else if (state.drawing.kind === "stair") commitStair(); else commitRoof(); }
-  if (event.pointerType === "touch") { state.touchPointers.delete(event.pointerId); if (!state.touchPointers.size) state.touchGesture = null; return; }
-  if ((state.drawing?.kind === "wall" || state.drawing?.kind === "foundation") && state.drawing.pointerId === event.pointerId) { if (state.drawing.kind === "foundation") commitFoundation(); else commitWall(); state.pointerAction = null; }
-  else if (state.pointerAction?.pointerId === event.pointerId) { state.pointerAction = null; if(state.mode==='3d')canvas.style.cursor='grab'; }
-  if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+  if (event.pointerType === "touch") {
+    if (!state.touchPointers.has(event.pointerId)) return;
+    if (touchDraws() && state.touchPointers.size === 1) {
+      if (event.type === 'pointerup') {
+        finishPointerDrawing(event);
+        if (state.pointerAction?.kind === 'touchTap' && state.pointerAction.pointerId === event.pointerId && lengthBetween(state.pointerAction.start, eventPoint(event)) <= 12) beginPointerAction(event, eventPoint(event));
+      }
+      state.drawing = null; state.pointerAction = null;
+    }
+    state.touchPointers.delete(event.pointerId); if (!state.touchPointers.size) state.touchNavigationOnly = false;
+    rebaseTouchGesture(); releaseCanvasPointer(event.pointerId); render(); return;
+  }
+  if (state.activePointerId !== event.pointerId) return;
+  if (event.type === "pointercancel" || event.type === "lostpointercapture") { resetPointerInteraction(); render(); return; }
+  finishPointerDrawing(event);
+  if (state.pointerAction?.pointerId === event.pointerId) { state.pointerAction = null; if(state.mode==='3d')canvas.style.cursor='grab'; }
+  state.activePointerId = null; releaseCanvasPointer(event.pointerId); render();
 }
 
-function setTool(tool) { state.tool = tool; state.statusMessage = tool === "wall" ? "Draw a measured wall" : tool === "foundation" ? "Draw a preliminary strip foundation" : tool === "deck" ? "Add deck outline points" : tool === "floor" ? "Add floor outline points" : tool === "room" ? "Add room boundary points" : tool === "pan" ? "Drag to pan the view" : "Ready"; state.drawing = null; if (tool !== "deck") state.deckDraft = []; if (tool !== "floor") state.floorDraft = []; if (tool !== "room") state.roomDraft = []; if (tool !== "service-route") state.serviceDraft = []; state.serviceError = ""; render(); }
-function setMode(mode) { const previousMode=state.mode; state.mode = mode; if(canvas?.style)canvas.style.cursor=mode==='3d'?'grab':'crosshair'; if(mode==='site'){state.tool='select';state.visibility.siteConcepts=true;} if(mode==='3d'&&previousMode!=='3d')state.view.walkthroughScope='house'; state.selected = null; state.drawing = null; state.deckDraft = []; state.floorDraft = []; state.roomDraft = []; state.serviceDraft = []; state.serviceError = ""; state.view.initialized = false; fitView(); render(); }
+function setTool(tool) { resetPointerInteraction(); state.tool = tool; state.statusMessage = tool === "wall" ? "Draw a measured wall" : tool === "foundation" ? "Draw a preliminary strip foundation" : tool === "deck" ? "Add deck outline points" : tool === "floor" ? "Add floor outline points" : tool === "room" ? "Add room boundary points" : tool === "pan" ? "Drag to pan the view" : "Ready"; state.drawing = null; if (tool !== "deck") state.deckDraft = []; if (tool !== "floor") state.floorDraft = []; if (tool !== "room") state.roomDraft = []; if (tool !== "service-route") state.serviceDraft = []; state.serviceError = ""; render(); }
+function setMode(mode) { resetPointerInteraction(); const previousMode=state.mode; state.mode = mode; if(canvas?.style)canvas.style.cursor=mode==='3d'?'grab':'crosshair'; if(mode==='site'){state.tool='select';state.visibility.siteConcepts=true;} if(mode==='3d'&&previousMode!=='3d')state.view.walkthroughScope='house'; state.selected = null; state.drawing = null; state.deckDraft = []; state.floorDraft = []; state.roomDraft = []; state.serviceDraft = []; state.serviceError = ""; state.view.initialized = false; fitView(); render(); }
 
 function setAllLayers(visible) { state.hidden3dLevels.clear(); for (const key of Object.keys(state.visibility)) state.visibility[key] = visible; state.selected = null; render(); }
 
-function loadExample(options = {}) { const focusSite = options.focusSite === true; state.showExamplePrompt = false; if (focusSite) { state.mode = "site"; state.tool = "select"; state.visibility.siteConcepts = true; } withHistory(() => { state.model = createExampleModel(); els.projectName.value = state.model.name; state.selected = null; state.roomDraft = []; state.serviceDraft = []; state.serviceError = ""; state.floorDraft = []; state.deckDraft = []; state.drawing = null; state.view.initialized = false; fitView(); }); if(!focusSite&&typeof kitchenPlan==='function')kitchenPlan();state.statusMessage = focusSite ? "Example house loaded · Site plan shows the pool, driveway, landscaping, fence and gate" : "Example house loaded · Interior plan, Exterior 3D, Kitchen and Elevations are ready";render(); }
-function newProject() { state.showExamplePrompt = false; state.model = createEmptyModel(); els.projectName.value = state.model.name; state.history = []; state.future = []; state.selected = null; state.deckDraft = []; state.floorDraft = []; state.roomDraft = []; state.serviceDraft = []; state.serviceError = ""; state.drawing = null; state.view.initialized = false; scheduleSave(); fitView(); render(); }
+function loadExample(options = {}) { if (!preserveProjectBeforeReplace("Before loading example")) return; resetPointerInteraction(); const focusSite = options.focusSite === true; state.showExamplePrompt = false; if (focusSite) { state.mode = "site"; state.tool = "select"; state.visibility.siteConcepts = true; } withHistory(() => { state.model = createExampleModel(); els.projectName.value = state.model.name; state.selected = null; state.roomDraft = []; state.serviceDraft = []; state.serviceError = ""; state.floorDraft = []; state.deckDraft = []; state.drawing = null; state.view.initialized = false; fitView(); }); if(!focusSite&&typeof kitchenPlan==='function')kitchenPlan();state.statusMessage = focusSite ? "Example house loaded · Site plan shows the pool, driveway, landscaping, fence and gate" : "Example house loaded · Interior plan, Exterior 3D, Kitchen and Elevations are ready";render(); }
+function newProject() { if (!preserveProjectBeforeReplace("Before new project")) return; resetPointerInteraction(); state.showExamplePrompt = false; state.model = createEmptyModel(); els.projectName.value = state.model.name; state.history = []; state.future = []; state.selected = null; state.deckDraft = []; state.floorDraft = []; state.roomDraft = []; state.serviceDraft = []; state.serviceError = ""; state.drawing = null; state.view.initialized = false; scheduleSave(); fitView(); render(); }
 function download(name, content, type) { const blob = new Blob([content], { type }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = name; link.click(); URL.revokeObjectURL(link.href); }
 function drawingSheetHtml({name,level,view,image,logo,layers,levels,date}) {
   if(!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(image))throw new Error('Sheet requires a local PNG snapshot.');
@@ -1691,7 +1814,7 @@ async function exportDrawingSheet() {
   finally{button.disabled=false;render();}
 }
 function saveJson() { persist(); const safeName = (els.projectName.value.trim() || "bc-design-project").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase(); download(`${safeName || "bc-design-project"}.json`, JSON.stringify(state.model, null, 2), "application/json"); state.statusMessage = "Project JSON downloaded"; render(); }
-function openJson(file) { const reader = new FileReader(); reader.addEventListener("load", () => { try { const model = normalizeModel(JSON.parse(reader.result)); state.showExamplePrompt = false; state.history.push(snapshot()); state.future = []; state.model = model; els.projectName.value = model.name; state.selected = null; state.roomDraft = []; state.serviceDraft = []; state.serviceError = ""; state.floorDraft = []; state.deckDraft = []; state.drawing = null; state.view.initialized = false; scheduleSave(); fitView(); render(); state.statusMessage = "Project JSON opened"; } catch (error) { state.statusMessage = `Open failed: ${error.message}`; render(); } }); reader.readAsText(file); }
+function openJson(file) { const reader = new FileReader(); reader.addEventListener("load", () => { try { const model = normalizeModel(JSON.parse(reader.result)); if (!preserveProjectBeforeReplace("Before opening JSON")) return; resetPointerInteraction(); state.showExamplePrompt = false; state.history.push(snapshot()); state.future = []; state.model = model; els.projectName.value = model.name; state.selected = null; state.roomDraft = []; state.serviceDraft = []; state.serviceError = ""; state.floorDraft = []; state.deckDraft = []; state.drawing = null; state.view.initialized = false; scheduleSave(); fitView(); render(); state.statusMessage = "Project JSON opened"; } catch (error) { state.statusMessage = `Open failed: ${error.message}`; render(); } }); reader.readAsText(file); }
 function exportCsv() { const q = quantityData(); const lines = [["Package","Net quantity","Waste allowance","Order quantity","Unit","Basis"], ...q.rows.map((row) => [row.label, quantityValue(row.net, row.unit), quantityValue(row.waste, row.unit), quantityValue(row.order, row.unit), row.unit, row.basis])]; download("bc-design-quantities.csv", lines.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\n"), "text/csv"); state.statusMessage = "Quantities CSV downloaded"; render(); }
 function exportCompleteTakeoffCsv(){
   const q=quantityData(),groups=state.model.takeoffGroups||[];
@@ -1848,6 +1971,8 @@ canvas.addEventListener("pointerdown", onPointerDown);
 canvas.addEventListener("pointermove", onPointerMove);
 canvas.addEventListener("pointerup", onPointerUp);
 canvas.addEventListener("pointercancel", onPointerUp);
+canvas.addEventListener("lostpointercapture", onPointerUp);
+window.addEventListener("blur", () => { resetPointerInteraction(); render(); });
 canvas.addEventListener("wheel", (event) => { event.preventDefault(); const screen = eventPoint(event); zoomAt(event.deltaY < 0 ? 1.1 : .9, screen.x, screen.y); }, { passive: false });
 
 document.addEventListener("keydown", (event) => { const key = event.key.toLowerCase(); const modifier = event.ctrlKey || event.metaKey; if (modifier && key === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); } else if (modifier && key === "y") { event.preventDefault(); redo(); } else if (!modifier && key === "escape") cancelDrawing(); else if (!modifier && key === "v") setTool("select"); else if (!modifier && key === "w") setTool("wall"); else if (!modifier && key === "d") setTool("door"); else if (!modifier && key === "n") setTool("window"); else if (!modifier && key === "f") setTool("floor"); else if (!modifier && key === "b") setTool("foundation"); else if (!modifier && key === "k") setTool("deck"); else if (!modifier && key === "p") setTool("pan"); else if (!modifier && key === "2") setMode("plan"); else if (!modifier && key === "3") setMode("3d"); });
@@ -1861,4 +1986,5 @@ if(typeof initFoundationSetout==='function')initFoundationSetout();
 if(typeof initElevations==='function')initElevations();
 const restoredSavedModel = restoreSaved();
 if (!restoredSavedModel) loadExample({ focusSite: true });
+state.projectReady = true;
 resizeCanvas();

@@ -1,4 +1,4 @@
-// View-only workspace organisation. No project data or history is stored here.
+// Workspace controls delegate project mutations to the tested model/recovery actions.
 (function initWorkspaceUi() {
   if (typeof document === 'undefined' || typeof document.createElement !== 'function' || window.BCWorkspace) return;
   const $ = selector => document.querySelector(selector);
@@ -77,6 +77,41 @@
   for(const id of ['interiorPlanButton','exteriorViewButton','siteWalkthroughButton','foundationViewButton','kitchenButton','elevationsButton'])shortcuts.append($(`#${id}`));
   for(const id of ['wetAreasButton','energyEfficiencyButton']){const el=$(`#${id}`);el.hidden=true;reviewBody.append(el);}
   const actions=$('.mode-actions');toolbar.append(actions);actions.append(button('Focus',()=>{root.classList.toggle('workspace-focus');delete root.dataset.drawer;syncFocus();},'Toggle a larger drawing area'));actions.lastChild.id='focusWorkspaceButton';
+  const inputMenu=make('details','workspace-menu drawing-input-menu');inputMenu.append(make('summary','','Drawing controls'));
+  const inputBody=make('div','workspace-menu-body');inputMenu.append(inputBody);toolbar.append(inputMenu);
+  function inputSelect(label,id,key,options,numeric=false){
+    const field=make('label','drawing-control-field');field.htmlFor=id;field.append(make('span','',label));const select=make('select');select.id=id;
+    for(const [value,title] of options){const option=make('option','',title);option.value=value;select.append(option);}select.value=String(state.inputSettings[key]);
+    select.addEventListener('change',()=>{setInputSetting(key,numeric?Number(select.value):select.value);inputHint.textContent=state.inputSettings.touchMode==='draw'?'One finger draws or selects. Two fingers pan and zoom. Switch back to pen navigation when using a pen.':state.inputSettings.touchMode==='disabled'?'Touch is ignored on the canvas. Pen and mouse remain active.':'Pen draws. One finger pans the plan or orbits 3D. Two fingers pan and zoom.';});field.append(select);inputBody.append(field);
+  }
+  inputSelect('Input mode','drawingInputMode','touchMode',[['navigate','Pen + touch navigation'],['draw','Finger drawing'],['disabled','Pen / mouse only']]);
+  inputSelect('Snap grid','drawingSnapGrid','grid',[[0,'No grid'],[10,'10 mm'],[25,'25 mm'],[50,'50 mm'],[100,'100 mm'],[250,'250 mm'],[500,'500 mm'],[1000,'1000 mm']],true);
+  inputSelect('Wall / footing angle','drawingAngleLock','angle',[[0,'Free'],[45,'45° steps'],[90,'90° steps']],true);
+  const largeLabel=make('label','drawing-control-check'),largeToggle=make('input');largeToggle.type='checkbox';largeToggle.id='drawingLargeControls';largeToggle.addEventListener('change',()=>{root.classList.toggle('workspace-touch',largeToggle.checked);});largeLabel.append(largeToggle,make('span','','Larger touch controls'));inputBody.append(largeLabel);
+  const inputHint=make('p','overview-copy','Pen draws. One finger pans the plan or orbits 3D. Two fingers pan and zoom.');inputHint.id='drawingInputHint';inputBody.append(inputHint);
+  inputBody.append(make('p','overview-copy','Input settings reset on launch. Exact wall and footing lengths use the entered millimetres. Pen pressure and eraser buttons do not change geometry.'));
+
+  const recovery=make('dialog','project-recovery-dialog');recovery.id='projectRecoveryDialog';recovery.setAttribute('aria-labelledby','projectRecoveryTitle');
+  const recoveryTitle=make('h2','','Project recovery');recoveryTitle.id='projectRecoveryTitle';recovery.append(recoveryTitle);
+  recovery.append(make('p','overview-copy','Keep a checkpoint before major edits. Up to eight recent copies are kept on this device, within available storage. Save JSON separately for a durable backup.'));
+  const recoveryStatus=make('p','overview-copy');recoveryStatus.setAttribute('role','status');recoveryStatus.id='projectRecoveryStatus';recovery.append(recoveryStatus);
+  const recoveryList=make('div','project-recovery-list');recoveryList.id='projectRecoveryList';recovery.append(recoveryList);
+  function refreshRecovery(){
+    recoveryList.replaceChildren();
+    try {
+      for(const entry of projectRecoveryEntries()){
+        const row=make('section','project-recovery-row');row.append(make('strong','',entry.name),make('p','',`${entry.savedAt?new Date(entry.savedAt).toLocaleString():''} · ${entry.reason}`));
+        const exportButton=button('Export JSON',()=>download('bc-design-checkpoint-'+entry.id+'.json',entry.raw,'application/json'));row.append(exportButton);
+        const restoreButton=button('Restore copy',()=>{try{if(restoreProjectCheckpoint(entry.id)){recoveryStatus.textContent='Restored. The previous drawing was checkpointed and is also available through Undo.';refreshRecovery();}else recoveryStatus.textContent=state.statusMessage;}catch(error){recoveryStatus.textContent=`Not restored: ${error.message}`;}});row.append(restoreButton);recoveryList.append(row);
+      }
+      if(!recoveryList.children.length)recoveryList.append(make('p','','No checkpoints yet. Create one before changing this project.'));
+    }catch(error){recoveryStatus.textContent=`Recovery unavailable: ${error.message}`;}
+  }
+  const recoveryActions=make('div','project-recovery-actions');
+  recoveryActions.append(button('Create checkpoint',()=>{try{saveProjectCheckpoint();recoveryStatus.textContent='Checkpoint saved on this device.';refreshRecovery();}catch(error){recoveryStatus.textContent=`Checkpoint not saved: ${error.message}`;}}),button('Save current JSON',saveJson),button('Close',()=>recovery.close()));recovery.append(recoveryActions);document.body.append(recovery);
+  const openRecovery=()=>{recoveryStatus.textContent=state.recoveryWarning||'Restoring validates the copy and checkpoints your current drawing first.';refreshRecovery();recovery.showModal();};
+  const recoveryButton=button('Project recovery',openRecovery);recoveryButton.id='projectRecoveryButton';topActions.append(recoveryButton);
+  const recoveryNote=make('p','overview-copy');recoveryNote.id='projectRecoveryWarning';recoveryNote.setAttribute('role','status');panels.project.prepend(recoveryNote);
   const mobileBar=make('div','workspace-mobile-actions');for(const [label,side,key] of [['Tools','left','build'],['Layers','left','layers'],['Rooms','left','rooms'],['Properties','right','properties'],['Schedules','right','schedules']])mobileBar.append(button(label,()=>{if(root.dataset.drawer===side&&(side==='left'?leftTab:rightTab)===key)delete root.dataset.drawer;else showTab(side,key);}));toolbar.after(mobileBar);
   for(const container of [rail,inspector]){const close=button('Close panel',()=>{delete root.dataset.drawer;});close.classList.add('workspace-close-panel');container.querySelector('.workspace-tabs').after(close);}
   const zoom=make('div','workspace-zoom');zoom.append(button('−',()=>zoomAt(1/1.2,state.width/2,state.height/2),'Zoom out'),button('Fit',()=>{fitView();render();},'Fit drawing'),button('+',()=>zoomAt(1.2,state.width/2,state.height/2),'Zoom in'));$('.canvas-shell').append(zoom);
@@ -89,7 +124,7 @@
     if(state.mode==='quantities'&&lastMode!=='quantities')revealSchedule('quantityCards');lastMode=state.mode;
     const rooms=JSON.stringify(state.model.rooms.filter(r=>r.levelId===state.model.activeLevelId).map(r=>[r.id,r.name,r.use,r.points]));if(rooms!==lastRooms){lastRooms=rooms;renderRooms();}
     for(const group of layerGroups){const count=group.querySelector('.layer-count');if(count){const rows=[...group.querySelectorAll('[data-layer]')];count.textContent=`${rows.filter(c=>c.checked).length}/${rows.length}`;}}
-    $('#modelStatus').title=$('#modelStatus').textContent;syncPlanClarity();
+    $('#modelStatus').title=$('#modelStatus').textContent;recoveryNote.textContent=state.recoveryWarning;syncPlanClarity();
   }
   window.BCWorkspace={sync,showTab,revealSchedule};
   document.body.classList.add('workspace-ready');showTab('left','build');showTab('right','properties');delete root.dataset.drawer;syncFocus();sync();

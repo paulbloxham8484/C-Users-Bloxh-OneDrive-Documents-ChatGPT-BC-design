@@ -1,0 +1,230 @@
+{
+  "reviewDate": "2026-11-10",
+  "timezone": "Australia/Brisbane",
+  "release": "0.6.8",
+  "releaseCommit": "1b7b2e53c54d5d34191d7b9e47f328f0dedcb051",
+  "candidateSourceVersion": "0.7.0-preview.1",
+  "candidateInstallerBuilt": false,
+  "releaseInstallerSha256": "5ce497223691ea3f0d42b54350b384734ce01f29ed9510b974a07411fdab5226",
+  "packages": [
+    {
+      "architecture": "ARM64",
+      "version": "0.6.8",
+      "canonicalFiles": 58,
+      "canonicalMismatches": [],
+      "asarSha256": "024b60b9e4d24dffceec5ef8b451c22972cad4468cb253b3897c045db94dd8ff"
+    },
+    {
+      "architecture": "x64",
+      "version": "0.6.8",
+      "canonicalFiles": 58,
+      "canonicalMismatches": [],
+      "asarSha256": "024b60b9e4d24dffceec5ef8b451c22972cad4468cb253b3897c045db94dd8ff"
+    }
+  ],
+  "baselineInputTests": {
+    "tests": 14,
+    "passed": 5,
+    "failed": 9,
+    "method": "Direct Node VM event sequences; not a browser or digitizer"
+  },
+  "finalScripts": [
+    {
+      "file": "connector-details.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "deck-boards.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "deck-edges.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "deck-framing.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "deck-post-members.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "deck-posts.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "deck-supports.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "example-layout.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "floor-cuts.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "floor-fittings.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "floor-framing.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "floor-openings.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "foundation.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "kitchen-elevations.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "member-end-cuts.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "plan-measurements.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "plan-sheet.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "project-recovery.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "quality-repair.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "roof-framing.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "roof-junctions.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "roof-trimming.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "roof.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "room.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "service-clearance-checks.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "service-connections.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "service-envelopes.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "service-route-body-checks.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "service-route-volumes.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "service.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "site-sheet.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "stair-coordination.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "stair-headroom.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "stair-members.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "stair-rail-ends.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "stair-rails.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "stair.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "stock-planning.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "surface-input.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "vector-pdf.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "wet-energy.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "desktop-app/paths.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "offline-shell.test.cjs",
+      "passed": true
+    },
+    {
+      "file": "drawing-controls.dom.test.cjs",
+      "passed": true,
+      "method": "jsdom 26.1.0; canvas/layout/dialogs stubbed"
+    }
+  ],
+  "focusedTests": {
+    "surfaceInput": 20,
+    "recoveryStorage": 4,
+    "passed": 24
+  },
+  "generatedDesktopWorkspace": {
+    "canonicalFiles": 59,
+    "matches": true
+  },
+  "notPassed": [
+    "actual browser pointer dispatch/rendering",
+    "actual browser offline restart",
+    "Windows executable launch/install",
+    "physical Surface pen/touch/palm rejection",
+    "Surface performance",
+    "sleep/rotation/resume",
+    "physical-device recovery"
+  ],
+  "browserBlocker": "Chromium AF_UNIX socket EPERM; escalation rejected by environment approval policy; bundled headless-shell download invalid archive",
+  "userProjectsAccessed": false
+}
