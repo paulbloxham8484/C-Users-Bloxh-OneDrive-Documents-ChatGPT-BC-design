@@ -115,6 +115,21 @@ button { color: inherit; }
 .design-stage { display: flex; flex-direction: column; min-width: 0; padding: 18px 20px 0; }
 .canvas-shell { position: relative; flex: 1; min-height: 420px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfb; box-shadow: var(--shadow); }
 #designCanvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+.drawing-input-menu .workspace-menu-body { min-width: 260px; max-width: min(340px, 90vw); }
+.drawing-control-field { display: grid; gap: 6px; margin: 8px 0; font-size: 12px; }
+.drawing-control-field select { min-height: 40px; width: 100%; }
+.drawing-control-check { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: 12px; }
+.workspace-touch button, .workspace-touch select, .workspace-touch input:not([type="checkbox"]), .workspace-touch .workspace-menu > summary { min-height: 44px; }
+.workspace-touch .tool-button { min-width: 44px; }
+.workspace-touch .layer-toggle { min-height: 44px; }
+.project-recovery-dialog { width: min(720px, 94vw); max-height: 85vh; overflow: auto; border: 1px solid #bdcdc5; border-radius: 12px; padding: 24px; color: #203b2b; }
+.project-recovery-dialog::backdrop { background: #172b2399; }
+.project-recovery-list { display: grid; gap: 12px; margin: 16px 0; }
+.project-recovery-row { padding: 12px; border: 1px solid #d4e1d9; border-radius: 8px; overflow-wrap: anywhere; }
+.project-recovery-row p { font-size: 12px; }
+.project-recovery-row button { margin: 4px 8px 4px 0; min-height: 44px; }
+.project-recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.project-recovery-actions button { min-height: 44px; }
 .canvas-empty { position: absolute; top: 50%; left: 50%; width: min(360px, 80%); color: var(--muted); pointer-events: none; text-align: center; transform: translate(-50%, -50%); }
 .canvas-empty.is-hidden { display: none; }
 .empty-mark { display: grid; width: 47px; height: 47px; margin: 0 auto 12px; place-items: center; border: 1px solid #b8d2c0; border-radius: 50%; background: var(--green-soft); color: var(--green); font-size: 25px; }

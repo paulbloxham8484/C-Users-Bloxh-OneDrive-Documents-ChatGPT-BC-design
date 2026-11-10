@@ -1,5 +1,11 @@
 # BC Design
 
+## Surface workflow upgrade draft — 10 November 2026
+
+The current published GitHub Windows release is [0.6.8](https://github.com/paulbloxham8484/C-Users-Bloxh-OneDrive-Documents-ChatGPT-BC-design/releases/tag/v0.6.8). Its installer hash and both ARM64/x64 source payloads were verified in an isolated review; the older local 0.6.6 notes below are historical.
+
+This branch prepares **0.7.0-preview.1** with pen/finger input modes, corrected gesture ownership and 3D touch navigation, adjustable grid/angle controls, exact wall/footing lengths, larger controls and project checkpoints. No preview installer has been built or published. Actual browser and Surface hardware acceptance remain open. See the [verified review, test boundaries and physical-device procedure](docs/PAU-26-Surface-review-2026-11-10.md).
+
 ## Landscape / pool takeoff expansion — local source, 27 October 2026
 
 The separate **Landscaping** takeoff is now a detailed editable schedule rather than a broad allowance list. It includes pool-shell excavation, preliminary concrete pool-wall and floor volumes, deck net/order areas and edge lengths, screw-pier and bracket allowances, stone coping, channel drainage, pump enclosure and pad, pool-barrier panels/posts/gate, planting species quantities and nursery leads, plus driveway pavement components. The driveway concept records N25 normal-class concrete at a 125 mm planning thickness: 900 m² × 0.125 m = **112.5 m³ theoretical placed volume** before waste, thickened edges, joints, aprons or route changes.

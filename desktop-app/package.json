@@ -1,7 +1,7 @@
 {
   "name": "bc-design-desktop",
   "productName": "BC Design",
-  "version": "0.6.8",
+  "version": "0.7.0-preview.1",
   "description": "Measured building design for Bloxham Building & Construction",
   "author": "Bloxham Building & Construction",
   "license": "UNLICENSED",
@@ -21,7 +21,7 @@
     "appId": "au.com.bloxham.bcdesign",
     "asar": true,
     "directories": {
-      "output": "release/0.6.8",
+      "output": "release/0.7.0-preview.1",
       "buildResources": "build"
     },
     "files": [
